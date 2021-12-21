@@ -20,7 +20,7 @@ namespace LECodeBSTRMMassRenamer
             //Technically we really only need the file name, but hey, in case the other settings become relevant in the future, might as well get them!
             if(trackConfigSplit.Length > 1)
             {
-                this.TrackSlotID = trackConfigSplit[1].Trim();
+                this.MusicSlotID = trackConfigSplit[1].Trim();
             }
             if (trackConfigSplit.Length > 2)
             {

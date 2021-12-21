@@ -20,7 +20,7 @@ Then, fill your input directory with .brstm files whose filenames match the file
 - (Last Lap)
 - (LastLap)
 - (Fast)
-- All of the above with 0 or 1 spaces in front of the name.  Casing does not matter.
+- All of the above with 0 or 1 spaces in front of the suffix.  Casing does not matter.
 
 As an example, if your track is named MyTrack.szs and LE-CODE ends up copying a renamed version to 08F.szs, you would put two brstm files in the input folder named MyTrack.brstm and MyTrack (Final Lap).brstm.  This would output two files named 08F.brstm and 08F_f.brstm for normal and final lap versions respectively.
 

@@ -22,26 +22,47 @@ namespace LECodeBRSTMMassRenamer
         string[] ConfigFileContents;
         string[] TracksFileContents;
         List<string> processedMessages = new List<string>();
+        bool AllowFileOverwriting = false;
+        bool ReversedMode = false;
+        bool ClearOutputFolder = false;
+        bool VerifyTrackFileExists = false;
+        string TracksFolder;
 
         public FileProcessor(IConfiguration config)
         {
             ConfigFileLocation = config.GetSection("ConfigFile").Value;
             BRSTMInputFolder = config.GetSection("BRSTMInputFolder").Value;
             BRSTMOutputFolder = config.GetSection("BRSTMOutputFolder").Value;
-            TracksBMGFile = config.GetSection("TracksBMGFile").Value;           
+            TracksBMGFile = config.GetSection("TracksBMGFile").Value;
+            AllowFileOverwriting = bool.Parse(config.GetSection("AllowFileOverwriting").Value);
+            ReversedMode = bool.Parse(config.GetSection("ReversedMode").Value);
+            ClearOutputFolder = bool.Parse(config.GetSection("ClearOutputFolder").Value);
+            VerifyTrackFileExists = bool.Parse(config.GetSection("VerifyTrackFileExists").Value);
+            TracksFolder = config.GetSection("TracksFolder").Value;
         }
 
         public void RunProcessor()
         {
-            if (string.IsNullOrEmpty(ConfigFileLocation) || string.IsNullOrEmpty(BRSTMInputFolder) || string.IsNullOrEmpty(BRSTMOutputFolder) || string.IsNullOrEmpty(TracksBMGFile))
+            if (string.IsNullOrEmpty(ConfigFileLocation) || string.IsNullOrEmpty(BRSTMInputFolder) || string.IsNullOrEmpty(BRSTMOutputFolder) || string.IsNullOrEmpty(TracksBMGFile) || (VerifyTrackFileExists && string.IsNullOrEmpty(TracksFolder)))
             {
                 Console.WriteLine("ERROR:  Missing values for setting(s), please double check your appsettings.json file.");
+            }
+            BRSTMInputFolder = FormatFileDirectory(BRSTMInputFolder);
+            BRSTMOutputFolder = FormatFileDirectory(BRSTMOutputFolder);
+            if (!string.IsNullOrEmpty(TracksFolder))
+            {
+                TracksFolder = FormatFileDirectory(TracksFolder);
             }
 
             ConfigFileContents = System.IO.File.ReadAllLines(ConfigFileLocation);
             TracksFileContents = System.IO.File.ReadAllLines(TracksBMGFile);
-            DirectoryInfo dir = new DirectoryInfo(BRSTMInputFolder);
-            FileInfo[] files = dir.GetFiles("*.brstm");
+            DirectoryInfo inputDir = new DirectoryInfo(BRSTMInputFolder);
+            FileInfo[] files = inputDir.GetFiles("*.brstm");
+            if(ClearOutputFolder)
+            {
+                Console.WriteLine("ClearOutputFolder enabled, clearing output folder.");
+                DeleteExistingFilesInDirectory(BRSTMOutputFolder);
+            }
             if(files.Length == 0)
             {
                 Console.WriteLine("No brstm files found in input folder.");
@@ -55,9 +76,21 @@ namespace LECodeBRSTMMassRenamer
             }
             WriteFinalResults();
         }
+        
+        public void DeleteExistingFilesInDirectory(string directory)
+        {
+            DirectoryInfo directoryInfo = new DirectoryInfo(directory);
+            foreach(FileInfo file in directoryInfo.GetFiles())
+            {
+                Console.WriteLine($"Deleting {file.Name}.");
+                file.Delete();
+            }
+        }
 
         public void ProcessTrack(string TracksLine, FileInfo[] files)
         {
+            Console.WriteLine($"=======================");
+            Console.WriteLine($"Processing {TracksLine}");
             string[] TracksLineSplit = TracksLine.Split("\t= ");
             if(TracksLineSplit.Length < 2)
             {
@@ -81,8 +114,16 @@ namespace LECodeBRSTMMassRenamer
             
             string trackName = TracksLineSplit[1].Trim();
 
+            if (VerifyTrackFileExists)
+            {
+                if (!File.Exists(TracksFolder + hexValue + ".szs"))
+                {
+                    Console.WriteLine(TracksFolder + hexValue + ".szs not found, skipping.");
+                    return;
+                }
+            }
+
             //We've gotten far enough to start parsing the actual config file.
-            Console.WriteLine($"Processing Track {trackName} with hexValue {hexValue}");
             string trackConfig = ConfigFileContents.FirstOrDefault(configLine => configLine.ToLower().Contains(trackName.ToLower()));
             if (trackConfig != null)
             {
@@ -93,19 +134,31 @@ namespace LECodeBRSTMMassRenamer
                     return;
                 }
                 TrackDefinition track = new TrackDefinition(trackConfig);
-                files.Where(filesFound => filesFound.Name.StartsWith(track.FileName));
-                FileInfo normalSpeedBrstm = files.FirstOrDefault(trackBrstm => trackBrstm.Name.ToLower() == track.FileName.ToLower() + ".brstm");
-                CopyBRSTMFile(normalSpeedBrstm, false, hexValue);
+                string inputFileName;
+                string outputFileName;
+                if(ReversedMode)
+                {
+                    inputFileName = hexValue;
+                    outputFileName = track.FileName;
+                }
+                else
+                {
+                    inputFileName = track.FileName;
+                    outputFileName = hexValue;
+                }
+                files.Where(filesFound => filesFound.Name.StartsWith(inputFileName));
+                FileInfo normalSpeedBrstm = files.FirstOrDefault(trackBrstm => trackBrstm.Name.ToLower() == inputFileName.ToLower() + ".brstm");
+                CopyBRSTMFile(normalSpeedBrstm, false, outputFileName);
                 FileInfo finalSpeedBrstm;
                 int i = 0;
                 while (i < PossibleFinalLapSuffixes.Count)
                 {
                     finalSpeedBrstm = files.FirstOrDefault(trackBrstm =>
-                        trackBrstm.Name.ToLower() == $"{track.FileName.ToLower()}{PossibleFinalLapSuffixes[i].ToLower()}.brstm"
-                        || trackBrstm.Name.ToLower() == $"{track.FileName.ToLower()} {PossibleFinalLapSuffixes[i].ToLower()}.brstm");
+                        trackBrstm.Name.ToLower() == $"{inputFileName.ToLower()}{PossibleFinalLapSuffixes[i].ToLower()}.brstm"
+                        || trackBrstm.Name.ToLower() == $"{inputFileName.ToLower()} {PossibleFinalLapSuffixes[i].ToLower()}.brstm");
                     if (finalSpeedBrstm != null)
                     {
-                        CopyBRSTMFile(finalSpeedBrstm, true, hexValue);
+                        CopyBRSTMFile(finalSpeedBrstm, true, outputFileName);
                         i = PossibleFinalLapSuffixes.Count;
                     }
                     i++;
@@ -113,27 +166,27 @@ namespace LECodeBRSTMMassRenamer
             }
         }
 
-        public void CopyBRSTMFile(FileInfo file, bool isFinal, string hexValue)
+        public void CopyBRSTMFile(FileInfo file, bool isFinal, string outputName)
         {
             //if found brstm, copy with hexValue as name.
             if (file != null)
             {
-                string finalFileName = hexValue;
+                string finalFileName = outputName;
                 if (isFinal)
                 {
                     finalFileName += "_f";
                 }
                 finalFileName += ".brstm";
-                Console.WriteLine($"Creating file {BRSTMOutputFolder + "\\" + finalFileName}");
-                if(!File.Exists(BRSTMOutputFolder + "\\" + finalFileName))
+                Console.WriteLine($"Creating file {BRSTMOutputFolder + finalFileName}");
+                if(File.Exists(BRSTMOutputFolder + finalFileName) && !AllowFileOverwriting)
                 {
-                    System.IO.File.Copy(file.FullName, BRSTMOutputFolder + "\\" + finalFileName);
-                    processedMessages.Add($"Created {finalFileName} from {file.Name}.");
+                    Console.WriteLine($"File already exists {finalFileName}");
+                    processedMessages.Add($"Attempted to create {finalFileName} from {file.Name}, but it already existed.");                  
                 }
                 else
                 {
-                    Console.WriteLine($"File already exists {finalFileName}");
-                    processedMessages.Add($"Attempted to create {finalFileName} from {file.Name}, but it already existed.");
+                    System.IO.File.Copy(file.FullName, BRSTMOutputFolder + finalFileName, AllowFileOverwriting);
+                    processedMessages.Add($"Created {finalFileName} from {file.Name}.");
                 }
                 
             }
@@ -154,6 +207,14 @@ namespace LECodeBRSTMMassRenamer
                 }
                 Console.WriteLine($"Your files can be found at {BRSTMOutputFolder}");
             }
+        }
+
+        public string FormatFileDirectory(string directoryPath)
+        {
+            if (!directoryPath.EndsWith("\\")) {
+                directoryPath += "\\";
+            }
+            return directoryPath;
         }
     }
 }
